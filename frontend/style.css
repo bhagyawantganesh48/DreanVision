@@ -1,4 +1,4 @@
-:root {
+﻿:root {
     --bg-dark: #121212;
     --panel-bg: #1e1e1e;
     --primary: #bb86fc;
@@ -240,4 +240,71 @@ button.secondary:hover {
 }
 .btn-verify:hover {
     background: #66bb6a;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Thermal Camera Assessment Control Panel
+═══════════════════════════════════════════════════════════ */
+
+.control-panel {
+    grid-column: 1 / -1;
+}
+
+.control-panel h2 {
+    margin-bottom: 18px;
+}
+
+.inspect-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.control-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.control-row label {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.control-row select {
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    width: 100%;
+}
+
+/* ── Search box in feed header ────────────────────────────── */
+
+.search-box {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.search-box input {
+    padding: 7px 12px;
+    min-width: 210px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(0, 0, 0, 0.22);
+    color: white;
+    font-size: 0.85rem;
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+
+@media (max-width: 820px) {
+    .dashboard       { grid-template-columns: 1fr; }
+    .control-panel   { grid-column: 1; }
 }

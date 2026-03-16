@@ -17,6 +17,24 @@
     </header>
 
     <main class="dashboard">
+
+        <!-- ── Thermal Camera Assessment Control Panel (full width) ── -->
+        <section class="panel control-panel">
+            <h2>🔍 Thermal Camera Assessment</h2>
+            <div class="inspect-controls">
+                <div class="control-row">
+                    <label for="component-select">Select Component</label>
+                    <select id="component-select">
+                        <option value="crankcase">Crankcase (Engine)</option>
+                        <option value="exhaust_manifold">Exhaust Manifold (Exhaust)</option>
+                        <option value="brake_rotor">Brake Rotor (Brakes)</option>
+                        <option value="cylinder_head">Cylinder Head (Engine)</option>
+                        <option value="battery_pack">Battery Pack (Electrical)</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
         <!-- Statistics Panel -->
         <section class="panel stats-panel">
             <h2>Production Analytics</h2>
@@ -51,6 +69,11 @@
         <section class="panel main-feed">
             <div class="feed-header">
                 <h2>Real-Time Inspection Monitor</h2>
+                <div class="search-box">
+                    <input id="searchInput" type="text" placeholder="Search by UID or component…">
+                    <button onclick="searchInspections()">Search</button>
+                    <button class="secondary" onclick="resetSearch()">Reset</button>
+                </div>
             </div>
 
 
@@ -108,7 +131,6 @@
         </div>
     </div>
 
-    <script src="digital_twin.js"></script>
     <script src="script.js"></script>
 </body>
 
