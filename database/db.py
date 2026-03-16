@@ -26,13 +26,18 @@ def init_db():
         cursor = conn.cursor()
         
         # 1. Dataset Table
+        cursor.execute("DROP TABLE IF EXISTS component_temperature_rules")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS component_temperature_rules (
                 component_name TEXT PRIMARY KEY,
+                category TEXT,
+                material TEXT,
                 normal_temp_min REAL,
                 normal_temp_max REAL,
                 critical_temp REAL,
-                failure_temp REAL
+                failure_temp REAL,
+                sensor_type TEXT,
+                sampling_rate_sec REAL
             )
         """)
         
@@ -64,18 +69,27 @@ def init_db():
             )
         """)
         
-        # 4. Insert Default Rules (Step-7 helper)
-        default_rules = [
-            ("crankcase", 30.0, 75.0, 95.0, 120.0),
-            ("heat_exchanger", 25.0, 65.0, 85.0, 110.0),
-            ("main_bearing", 35.0, 80.0, 100.0, 130.0),
-            ("valve_manifold", 20.0, 55.0, 75.0, 100.0)
-        ]
-        cursor.executemany("""
-            INSERT OR IGNORE INTO component_temperature_rules 
-            (component_name, normal_temp_min, normal_temp_max, critical_temp, failure_temp)
-            VALUES (?, ?, ?, ?, ?)
-        """, default_rules)
+        # 4. Load from CSV
+        csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "components.csv")
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                header = next(reader)
+                rules = []
+                for row in reader:
+                    if len(row) >= 9:
+                        try:
+                            rules.append((row[0].strip(), row[1].strip(), row[2].strip(), float(row[3]), float(row[4]), float(row[5]), float(row[6]), row[7].strip(), float(row[8])))
+                        except ValueError:
+                            pass
+                cursor.executemany("""
+                    INSERT OR REPLACE INTO component_temperature_rules 
+                    (component_name, category, material, normal_temp_min, normal_temp_max, critical_temp, failure_temp, sensor_type, sampling_rate_sec)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, rules)
+        except Exception as e:
+            logger.error(f"Failed to load CSV: {e}")
         conn.commit()
     logger.info(f"Database initialized at {DB_PATH}")
 

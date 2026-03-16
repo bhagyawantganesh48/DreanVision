@@ -100,6 +100,33 @@ def _classify_status(max_temp: float, rule: dict | None) -> str:
         return "OK"
 
 
+def _detect_component(t_max: float, all_rules: list[dict]) -> tuple[str, dict | None]:
+    """Auto-detects the component whose normal temperature range is closest to t_max."""
+    if not all_rules:
+        return "ambient", None
+        
+    if t_max < 30.0:  # Room temperature cutoff
+        return "ambient", None
+
+    best_match = None
+    min_dist = float('inf')
+
+    for rule in all_rules:
+        # Center of its normal operating temperature
+        n_min = rule.get("normal_temp_min", 0)
+        n_max = rule.get("normal_temp_max", n_min + 50)
+        center = (n_min + n_max) / 2.0
+        
+        dist = abs(t_max - center)
+        if dist < min_dist:
+            min_dist = dist
+            best_match = rule
+            
+    if best_match and min_dist < 150: # Must be somewhat within range
+        return best_match["component_name"], best_match
+        
+    return "ambient", None
+
 def _fetch_all_components() -> list[dict]:
     """Return all rows from component_temperature_rules for the selector UI."""
     try:
@@ -117,7 +144,7 @@ def _draw_overlay(frame_bgr: np.ndarray, stats: dict, fps: float,
     """Burn stats + STATUS banner onto the heatmap frame."""
     h, w = frame_bgr.shape[:2]
     bar_h   = 36
-    panel_h = 52     # top status banner height
+    panel_h = 65     # top status banner height
     color   = STATUS_COLORS.get(status, STATUS_COLORS["UNKNOWN"])
     overlay = frame_bgr.copy()
 
@@ -170,6 +197,9 @@ def _draw_overlay(frame_bgr: np.ndarray, stats: dict, fps: float,
                       f"CRIT {rule['critical_temp']:.0f}°C  "
                       f"FAIL {rule['failure_temp']:.0f}°C")
         put(thresh_txt, 180, 35, scale=0.38, col=(170, 170, 170))
+        
+        extra_txt = f"Mat: {rule.get('material', 'N/A')} | Sens: {rule.get('sensor_type', 'N/A')}"
+        put(extra_txt, 180, 50, scale=0.35, col=(150, 200, 150))
     else:
         put("No DB rule — using defaults", 180, 35, scale=0.38, col=(120, 120, 120))
 
@@ -277,14 +307,8 @@ def main():
         logger.warning("DB init error: %s — status classification uses defaults.", exc)
 
     component_name = args.component
-    rule = fetch_rule(component_name)
-    if rule:
-        logger.info("DB rule for '%s': NORM %.0f–%.0f°C  CRIT %.0f°C  FAIL %.0f°C",
-                    component_name,
-                    rule["normal_temp_min"], rule["normal_temp_max"],
-                    rule["critical_temp"], rule["failure_temp"])
-    else:
-        logger.warning("No DB rule found for '%s' — using config defaults.", component_name)
+    all_rules = _fetch_all_components()
+    logger.info("Loaded %d component rules from database for auto-detection.", len(all_rules))
 
     # ── Cloud uploader ────────────────────────────────────────────────────────
     uploader = _CloudUploader()
@@ -317,8 +341,8 @@ def main():
     print("\n" + "═" * 60)
     print("  DreamVision  ●  Live Thermal Feed")
     print(f"  Backend   : {backend_name}")
-    print(f"  Component : {component_name}")
-    print(f"  DB Rule   : {'Loaded' if rule else 'Using defaults'}")
+    print(f"  Component : AUTO-DETECT (Based on Temp)")
+    print(f"  DB Rules  : {len(all_rules)} loaded")
     print(f"  Cloud     : {'MongoDB Atlas' if uploader._ready else 'Offline'}")
     print(f"  Press 'q' to quit  |  's' to snapshot")
     print("═" * 60 + "\n")
@@ -332,7 +356,7 @@ def main():
     # ── OpenCV window ─────────────────────────────────────────────────────────
     WIN = "DreamVision  ●  Live Thermal Feed"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WIN, cfg.DISPLAY_WIDTH, cfg.DISPLAY_HEIGHT + 52)  # extra for banner
+    cv2.resizeWindow(WIN, cfg.DISPLAY_WIDTH, cfg.DISPLAY_HEIGHT + 65)  # extra for banner
 
     snap_dir = os.path.join(os.path.dirname(__file__), "data", "snapshots")
     os.makedirs(snap_dir, exist_ok=True)
@@ -362,13 +386,18 @@ def main():
             stats   = _build_stats(celsius)
             t_max   = stats["max_celsius"]
 
-            # ── Status classification ─────────────────────────────────────
-            last_status = _classify_status(t_max, rule)
+            # ── Auto-Detect Component & Status ────────────────────────────
+            current_comp, current_rule = _detect_component(t_max, all_rules)
+            
+            if current_comp == "ambient":
+                last_status = "UNKNOWN"
+            else:
+                last_status = _classify_status(t_max, current_rule)
 
             # ── Render frame ──────────────────────────────────────────────
             heatmap = _colormap_frame(celsius)
             display = _draw_overlay(heatmap, stats, fps, backend_name,
-                                    last_status, component_name, rule)
+                                    last_status, current_comp, current_rule)
 
             cv2.imshow(WIN, display)
 
@@ -389,10 +418,10 @@ def main():
                 logger.info("Snapshot saved: %s", path)
                 
                 # Upload to DB & Cloud
-                uid = f"{component_name}_{ts_fn}_{uuid.uuid4().hex[:6]}"
+                uid = f"{current_comp}_{ts_fn}_{uuid.uuid4().hex[:6]}"
                 record = {
                     "part_uid":       uid,
-                    "component_name": component_name,
+                    "component_name": current_comp,
                     "temperature":    round(t_max, 2),
                     "status":         last_status,
                     "device_id":      cfg.DEVICE_ID,
@@ -406,7 +435,7 @@ def main():
                 try:
                     insert_inspection(
                         part_uid=uid,
-                        component_name=component_name,
+                        component_name=current_comp,
                         temperature=round(t_max, 2),
                         status=last_status,
                         device_id=cfg.DEVICE_ID,
@@ -422,12 +451,12 @@ def main():
                             import requests
                             broadcast_msg = {
                                 "part_uid": uid,
-                                "component_name": component_name,
+                                "component_name": current_comp,
                                 "temperature": round(t_max, 2),
                                 "status": last_status,
                                 "timestamp": ts_iso
                             }
-                            requests.post("http://127.0.0.1:8002/dashboard/broadcast_new", json=broadcast_msg, timeout=1)
+                            requests.post("http://127.0.0.1:3000/inspection", json=broadcast_msg, timeout=1)
                         except Exception:
                             pass
                     threading.Thread(target=notify_dash, daemon=True).start()

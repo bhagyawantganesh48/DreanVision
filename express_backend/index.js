@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,12 +10,15 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+// Serve static thermal images saved by the Python script
+app.use(express.static(path.join(__dirname, '../data/snapshots')));
 
 // MongoDB Configuration
 const uri = process.env.MONGO_URI || "mongodb+srv://harsh1:%23london%261234@harsh1.hfifgiu.mongodb.net/";
 const client = new MongoClient(uri);
 
 let db, collection;
+let clients = [];
 
 // Connect to MongoDB
 async function connectDB() {
@@ -31,6 +35,16 @@ connectDB();
 
 // ── API ROUTES ──────────────────────────────────────────────────────────────
 
+// SSE Endpoint for instant frontend updates
+app.get('/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.write(`data: {"connected": true}\n\n`);
+    clients.push(res);
+    req.on('close', () => { clients = clients.filter(c => c !== res); });
+});
+
 // Health Check
 app.get('/', (req, res) => {
     res.json({ status: "API is running", timestamp: new Date() });
@@ -45,16 +59,27 @@ app.post('/inspection', async (req, res) => {
         const data = req.body;
         
         // Basic validation
-        if (!data.part_uid || !data.status || !data.temperature) {
+        if (!data.part_uid || data.temperature === undefined) {
              return res.status(400).json({ error: "Missing required fields" });
+        }
+
+        // DASHBOARD AUTO-ASSIGN STATUS RULE
+        let temp = Number(data.temperature);
+        let calculatedStatus = 'UNKNOWN';
+        if (temp <= 80) {
+            calculatedStatus = 'OK';
+        } else if (temp <= 120) {
+            calculatedStatus = 'WARNING';
+        } else {
+            calculatedStatus = 'NOK';
         }
 
         // Default missing values if sent by raw ESP32
         const record = {
             part_uid: data.part_uid,
             component_name: data.component_name || "Unknown",
-            temperature: Number(data.temperature),
-            status: data.status, // "OK", "WARNING", "NOK"
+            temperature: temp,
+            status: calculatedStatus, // "OK", "WARNING", "NOK"
             device_id: data.device_id || "ESP32_THERMAL_01",
             timestamp: data.timestamp || new Date().toISOString(),
             verified_status: data.verified_status || "Pending",
@@ -67,6 +92,9 @@ app.post('/inspection', async (req, res) => {
             { $set: record },
             { upsert: true }
         );
+
+        // Broadcast instant update to all connected Dashboards
+        clients.forEach(c => c.write(`data: ${JSON.stringify({ event: 'new_inspection', record })}\n\n`));
 
         res.status(201).json({ message: "Inspection recorded successfully", record });
     } catch (error) {
@@ -95,7 +123,47 @@ app.get('/results', async (req, res) => {
 });
 
 /**
- * 3. GET /stats
+ * 3. GET /dashboard/inspection/:uid
+ * Fetch details of a single inspection for the modal
+ */
+app.get('/dashboard/inspection/:uid', async (req, res) => {
+    try {
+        const uid = req.params.uid;
+        const result = await collection.findOne({ part_uid: uid });
+        if (!result) return res.status(404).json({ error: "Inspection not found" });
+        res.json(result);
+    } catch (error) {
+        console.error("Error fetching inspection:", error);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+/**
+ * 4. POST /dashboard/verify/:uid
+ * Save supervisor verification override
+ */
+app.post('/dashboard/verify/:uid', async (req, res) => {
+    try {
+        const uid = req.params.uid;
+        const { verified_status, verified_by } = req.body;
+        
+        const result = await collection.updateOne(
+            { part_uid: uid },
+            { $set: { verified_status, verified_by } }
+        );
+        
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ error: "Inspection not found" });
+        }
+        res.json({ message: "Verification saved successfully" });
+    } catch (error) {
+        console.error("Error verifying inspection:", error);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+/**
+ * 5. GET /stats
  * Return aggregated statistics: total, OK count, NOK count, yield %
  */
 app.get('/stats', async (req, res) => {

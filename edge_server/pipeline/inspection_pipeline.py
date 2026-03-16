@@ -29,39 +29,54 @@ logger = logging.getLogger("dreamvision.pipeline")
 
 PROCESSED_IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "processed_images")
 
-def run_edge_inspection(device_id: str, thermal_b64: str, rgb_b64: str, timestamp_str: str) -> dict:
+def run_edge_inspection(device_id: str, thermal_b64: str | None, rgb_b64: str | None,
+                         timestamp_str: str, component_name_override: str | None = None,
+                         simulated_temperature: float | None = None) -> dict:
     """
-    1. Decode images
-    2. Identify component type from RGB
-    3. Extract temperature reading from Thermal image
+    1. Decode images (skipped when simulating)
+    2. Identify component type from RGB (or use override)
+    3. Extract temperature reading from Thermal image (or use simulated_temperature)
     4. Validate OK/NOK state based on SQLite Dataset Rules
     5. Save processed output and commit inspection to DB
     6. Run ML Defect Prediction, Anomaly Detection, and Predictive Maintenance
     7. Return response to Smart Glass endpoint
     """
     logger.info(f"Incoming Edge AI Inspection Request from Device '{device_id}' at {timestamp_str}")
-    
-    # 1. Decode payloads
-    thermal_raw = _decode_b64_to_cv2(thermal_b64)
-    rgb_raw = _decode_b64_to_cv2(rgb_b64) if rgb_b64 else None
 
-    # Handle BGR images from simplified capture APIs by converting to grayscale
-    if thermal_raw is not None and len(thermal_raw.shape) == 3:
-        logger.warning("Thermal image received in BGR format; converting to grayscale for pipeline processing.")
-        thermal_raw = cv2.cvtColor(thermal_raw, cv2.COLOR_BGR2GRAY)
+    # 1. Decode payloads (only when a real image is provided)
+    thermal_raw = None
+    rgb_raw = None
+    thermal_float = None
+    if thermal_b64:
+        thermal_raw = _decode_b64_to_cv2(thermal_b64)
+        rgb_raw = _decode_b64_to_cv2(rgb_b64) if rgb_b64 else None
+        # Handle BGR images from simplified capture APIs by converting to grayscale
+        if thermal_raw is not None and len(thermal_raw.shape) == 3:
+            logger.warning("Thermal image received in BGR format; converting to grayscale for pipeline processing.")
+            thermal_raw = cv2.cvtColor(thermal_raw, cv2.COLOR_BGR2GRAY)
+        thermal_float = thermal_raw.astype(np.float32)
 
-    thermal_float = thermal_raw.astype(np.float32)
+    # 2. Vision Identifier (with optional client-side override)
+    if component_name_override:
+        component_name = component_name_override
+        logger.info(f"Using client-provided component name: '{component_name}'")
+    else:
+        component_name = identify_component(rgb_raw if rgb_raw is not None else thermal_float)
 
-    # 2. Vision Identifier
-    component_name = identify_component(rgb_raw if rgb_raw is not None else thermal_float)
-    
     # 3. Fetch rules
     rule = fetch_rule(component_name)
     if not rule:
         raise ValueError(f"Component '{component_name}' not registered in dataset DB.")
 
-    # 4. Thermal Extract & Evaluate
-    peak_temp, heatmap = extract_temperature(thermal_float)
+    # 4. Thermal Extract & Evaluate (with optional simulated temperature override)
+    if simulated_temperature is not None:
+        peak_temp = simulated_temperature
+        # Generate a representative heatmap for the stored image record
+        sim_frame = np.full((64, 64), min(peak_temp, 255.0), dtype=np.float32)
+        _, heatmap = extract_temperature(sim_frame)
+        logger.info(f"Using simulated temperature: {peak_temp}°C for component '{component_name}'")
+    else:
+        peak_temp, heatmap = extract_temperature(thermal_float)
     status_raw = evaluate_temperature(peak_temp, rule["normal_temp_max"], rule["failure_temp"])
     
     # Map status to user requested labels: OK / WARNING / NOK

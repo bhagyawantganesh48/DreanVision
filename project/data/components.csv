@@ -1,0 +1,6 @@
+component_name,category,material,normal_temp_min_C,normal_temp_max_C,critical_temp_C,failure_temp_C,sensor_type,sampling_rate_sec
+crankcase,engine,aluminum,60.0,120.0,140.0,150.0,thermal_cam,1.0
+exhaust_manifold,exhaust,cast_iron,200.0,400.0,450.0,500.0,thermal_cam,0.5
+brake_rotor,brakes,steel,50.0,250.0,300.0,350.0,thermal_cam,0.1
+cylinder_head,engine,aluminum,80.0,130.0,150.0,160.0,thermal_cam,1.0
+battery_pack,electrical,lithium,20.0,45.0,55.0,65.0,thermal_cam,2.0

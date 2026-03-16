@@ -103,9 +103,11 @@ if os.path.exists(DIGITAL_TWIN_DIR):
 
 class InspectRequest(BaseModel):
     device_id: str
-    thermal_image: str
+    thermal_image: Optional[str] = None   # Optional when using simulated_temperature
     rgb_image: Optional[str] = None
     timestamp: str
+    component_name: Optional[str] = None          # Override vision detection
+    simulated_temperature: Optional[float] = None  # Skip image decode; use value directly
 
 @app.post("/inspect", tags=["Device API"])
 async def inspect_component(req: InspectRequest):
@@ -120,7 +122,9 @@ async def inspect_component(req: InspectRequest):
             req.device_id,
             req.thermal_image,
             req.rgb_image,
-            req.timestamp
+            req.timestamp,
+            req.component_name,
+            req.simulated_temperature
         )
         
         # Broadcast to Digital Twin Dashboard

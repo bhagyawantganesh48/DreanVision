@@ -1,16 +1,30 @@
-const API_BASE = "http://localhost:3000";
+﻿const API_BASE      = "http://localhost:3000";   // Express backend (MongoDB history)
+const EDGE_API_BASE = "http://localhost:8002";   // Edge FastAPI  (live SQLite + inspect)
+
+const COMPONENT_THRESHOLDS = {
+    crankcase:        { label: "Crankcase",        sliderMin:   0, sliderMax:  200, normal_min:  60, normal_max: 120, critical: 140, failure: 150 },
+    exhaust_manifold: { label: "Exhaust Manifold", sliderMin: 100, sliderMax:  550, normal_min: 200, normal_max: 400, critical: 450, failure: 500 },
+    brake_rotor:      { label: "Brake Rotor",      sliderMin:   0, sliderMax:  400, normal_min:  50, normal_max: 250, critical: 300, failure: 350 },
+    cylinder_head:    { label: "Cylinder Head",    sliderMin:   0, sliderMax:  200, normal_min:  80, normal_max: 130, critical: 150, failure: 160 },
+    battery_pack:     { label: "Battery Pack",     sliderMin:   0, sliderMax:  100, normal_min:  20, normal_max:  45, critical:  55, failure:  65 }
+};
+
 let currentModalUid = null;
 let chartInstance = null;
 
 async function fetchStats() {
     try {
-        const res = await fetch(`${API_BASE}/stats`);
+        const res  = await fetch(`${EDGE_API_BASE}/dashboard/stats`);
         const data = await res.json();
 
-        document.getElementById('stat-total').innerText = data.total_inspections;
-        document.getElementById('stat-ok-rate').innerText = `${data.yield_percent}%`;
-        document.getElementById('stat-defect-rate').innerText = `${data.defect_percent}%`;
-        document.getElementById('stat-warning').innerText = data.warning_count;
+        const yieldPct = data.total_inspections > 0
+            ? (((data.ok_count + data.warning_count) / data.total_inspections) * 100).toFixed(1)
+            : "0.0";
+
+        document.getElementById('stat-total').innerText       = data.total_inspections;
+        document.getElementById('stat-ok-rate').innerText     = `${yieldPct}%`;
+        document.getElementById('stat-defect-rate').innerText = `${data.defect_rate_percent}%`;
+        document.getElementById('stat-warning').innerText     = data.warning_count;
 
         updateChart(data);
     } catch (e) { console.error("Stats fetching failed", e); }
@@ -18,7 +32,9 @@ async function fetchStats() {
 
 async function fetchFeed(query = "") {
     try {
-        const url = `${API_BASE}/results`;
+        const url = query
+            ? `${EDGE_API_BASE}/dashboard/inspections?search=${encodeURIComponent(query)}`
+            : `${EDGE_API_BASE}/dashboard/inspections`;
         const res = await fetch(url);
         const data = await res.json();
         const tbody = document.getElementById('tableBody');
@@ -54,7 +70,7 @@ function resetSearch() {
 
 async function openModal(uid) {
     try {
-        const res = await fetch(`${API_BASE}/dashboard/inspection/${uid}`);
+        const res = await fetch(`${EDGE_API_BASE}/dashboard/inspection/${uid}`);
         const data = await res.json();
         currentModalUid = uid;
 
@@ -87,7 +103,7 @@ async function submitVerification() {
     const user = document.getElementById('logged-user').innerText;
 
     try {
-        const res = await fetch(`${API_BASE}/dashboard/verify/${currentModalUid}`, {
+        const res = await fetch(`${EDGE_API_BASE}/dashboard/verify/${currentModalUid}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ verified_status: status, verified_by: user })
@@ -132,11 +148,13 @@ function updateChart(data) {
 
 // (Removed WebSocket dependency since we are polling every 5s per user request)
 
-// Initial loads and auto-refresh
+// ── Initial load & auto-refresh ───────────────────────────────────────────────
 fetchStats();
 fetchFeed();
+
 setInterval(() => {
-    if (!document.getElementById('searchInput').value && !currentModalUid) {
+    const si = document.getElementById('searchInput');
+    if ((!si || !si.value) && !currentModalUid) {
         fetchStats();
         fetchFeed();
     }
